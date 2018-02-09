@@ -146,6 +146,11 @@ public final class MethodMetadata implements Serializable {
     return indexToEncoded;
   }
 
+  public MethodMetadata indexToExpanderClass(Map<Integer, Class<? extends Expander>> indexToExpanderClass) {
+    this.indexToExpanderClass = indexToExpanderClass;
+    return this;
+  }
+
   /**
    * If {@link #indexToExpander} is null, classes here will be instantiated by newInstance.
    */

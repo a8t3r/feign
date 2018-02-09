@@ -92,28 +92,36 @@ public class ReflectiveFeign extends Feign {
   }
 
   @SuppressWarnings("unchecked")
-  private <T> FluentMethodHandler buildFluentMethodHandler(Target<T> target, Method method, MethodMetadata requiredMetadata) {
+  private <T> FluentMethodHandler buildFluentMethodHandler(Target<T> target, Method method, MethodMetadata md) {
     Target.HardCodedTarget fluentTarget = new Target.HardCodedTarget(method.getReturnType(), target.url());
     List<MethodMetadata> fluentMetadata = targetToHandlersByName.contract.parseAndValidatateMetadata(fluentTarget.type());
-    int definedSize = requiredMetadata.indexToName().size();
     for (MethodMetadata metadata : fluentMetadata) {
-      Map<Integer, Collection<String>> indexToName = metadata.indexToName();
-      Map<Integer, Collection<String>> updatedIndexToName = new LinkedHashMap<>(requiredMetadata.indexToName());
-      for (Integer indexKey : indexToName.keySet()) {
-        updatedIndexToName.put(indexKey + definedSize, indexToName.get(indexKey));
-      }
-      indexToName.putAll(updatedIndexToName);
+      metadata.indexToName().putAll(concatWithShift(md.indexToName(), metadata.indexToName()));
+      metadata.indexToEncoded().putAll(concatWithShift(md.indexToEncoded(), metadata.indexToEncoded()));
 
-      Map<Integer, Boolean> indexToEncoded = metadata.indexToEncoded();
-      Map<Integer, Boolean> updatedIndexToEncoded = new LinkedHashMap<>(requiredMetadata.indexToEncoded());
-      for (Integer indexKey : indexToEncoded.keySet()) {
-        updatedIndexToEncoded.put(indexKey + definedSize, indexToEncoded.get(indexKey));
+      int shift = md.indexToName().size();
+      metadata.indexToExpanderClass(concatWithShift(md.indexToExpanderClass(), metadata.indexToExpanderClass(), shift));
+      if (metadata.indexToExpander() != null) {
+        Map<Integer, Expander> expander = md.indexToExpander() != null ? md.indexToExpander() : Collections.emptyMap();
+        metadata.indexToExpander(concatWithShift(expander, metadata.indexToExpander(), shift));
       }
-      indexToEncoded.putAll(updatedIndexToEncoded);
     }
 
     Proxy fluentProxy = (Proxy) newInstance(fluentTarget, fluentMetadata);
     return new FluentMethodHandler(fluentTarget, fluentProxy);
+  }
+
+  private <T> Map<Integer, T> concatWithShift(Map<Integer, T> first, Map<Integer, T> second) {
+    int definedSize = first.size();
+    return concatWithShift(first, second, definedSize);
+  }
+
+  private <T> Map<Integer, T> concatWithShift(Map<Integer, T> first, Map<Integer, T> second, int shift) {
+    Map<Integer, T> result = new LinkedHashMap<>(first);
+    for (Integer indexKey : second.keySet()) {
+      result.put(indexKey + shift, second.get(indexKey));
+    }
+    return result;
   }
 
   static class FeignInvocationHandler implements InvocationHandler {
