@@ -142,6 +142,10 @@ public class Util {
             Modifier.PUBLIC) && method.getDeclaringClass().isInterface();
   }
 
+  public static boolean isFluent(Method method) {
+    return method.getAnnotation(Fluent.class) != null;
+  }
+
   /**
    * Adapted from {@code com.google.common.base.Strings#emptyToNull}.
    */

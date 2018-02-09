@@ -96,9 +96,14 @@ public interface Contract {
       for (Annotation methodAnnotation : method.getAnnotations()) {
         processAnnotationOnMethod(data, methodAnnotation, method);
       }
-      checkState(data.template().method() != null,
-                 "Method %s not annotated with HTTP method type (ex. GET, POST)",
-                 method.getName());
+
+      if (Util.isFluent(method)) {
+        data.fluentInterface(true);
+      } else {
+        checkState(data.template().method() != null,
+                "Method %s not annotated with HTTP method type (ex. GET, POST)",
+                method.getName());
+      }
       Class<?>[] parameterTypes = method.getParameterTypes();
       Type[] genericParameterTypes = method.getGenericParameterTypes();
 

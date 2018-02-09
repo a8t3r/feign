@@ -43,26 +43,43 @@ public class ReflectiveFeign extends Feign {
     this.factory = factory;
   }
 
+  @Override
+  public <T> T newInstance(Target<T> target) {
+    List<MethodMetadata> methodMetadata = targetToHandlersByName.contract.parseAndValidatateMetadata(target.type());
+    return newInstance(target, methodMetadata);
+  }
+
   /**
    * creates an api binding to the {@code target}. As this invokes reflection, care should be taken
    * to cache the result.
    */
   @SuppressWarnings("unchecked")
-  @Override
-  public <T> T newInstance(Target<T> target) {
-    Map<String, MethodHandler> nameToHandler = targetToHandlersByName.apply(target);
+  public <T> T newInstance(Target<T> target, List<MethodMetadata> methodMetadata) {
+    Map<String, MethodHandler> nameToHandler = targetToHandlersByName.apply(target, methodMetadata);
     Map<Method, MethodHandler> methodToHandler = new LinkedHashMap<Method, MethodHandler>();
     List<DefaultMethodHandler> defaultMethodHandlers = new LinkedList<DefaultMethodHandler>();
 
     for (Method method : target.type().getMethods()) {
-      if (method.getDeclaringClass() == Object.class) {
-        continue;
-      } else if(Util.isDefault(method)) {
-        DefaultMethodHandler handler = new DefaultMethodHandler(method);
-        defaultMethodHandlers.add(handler);
-        methodToHandler.put(method, handler);
-      } else {
-        methodToHandler.put(method, nameToHandler.get(Feign.configKey(target.type(), method)));
+      if (method.getDeclaringClass() != Object.class) {
+        if (Util.isDefault(method)) {
+          DefaultMethodHandler handler = new DefaultMethodHandler(method);
+          defaultMethodHandlers.add(handler);
+          methodToHandler.put(method, handler);
+        } else if (Util.isFluent(method)) {
+          MethodMetadata requiredMetadata = null;
+          for (MethodMetadata metadata : methodMetadata) {
+            if (metadata.configKey().equals(Feign.configKey(target.type(), method))) {
+              requiredMetadata = metadata;
+              break;
+            }
+          }
+          checkState(requiredMetadata != null, "Method %s metadata should be defined", method);
+
+          FluentMethodHandler handler = buildFluentMethodHandler(target, method, requiredMetadata);
+          methodToHandler.put(method, handler);
+        } else {
+          methodToHandler.put(method, nameToHandler.get(Feign.configKey(target.type(), method)));
+        }
       }
     }
     InvocationHandler handler = factory.create(target, methodToHandler);
@@ -72,6 +89,31 @@ public class ReflectiveFeign extends Feign {
       defaultMethodHandler.bindTo(proxy);
     }
     return proxy;
+  }
+
+  @SuppressWarnings("unchecked")
+  private <T> FluentMethodHandler buildFluentMethodHandler(Target<T> target, Method method, MethodMetadata requiredMetadata) {
+    Target.HardCodedTarget fluentTarget = new Target.HardCodedTarget(method.getReturnType(), target.url());
+    List<MethodMetadata> fluentMetadata = targetToHandlersByName.contract.parseAndValidatateMetadata(fluentTarget.type());
+    int definedSize = requiredMetadata.indexToName().size();
+    for (MethodMetadata metadata : fluentMetadata) {
+      Map<Integer, Collection<String>> indexToName = metadata.indexToName();
+      Map<Integer, Collection<String>> updatedIndexToName = new LinkedHashMap<>(requiredMetadata.indexToName());
+      for (Integer indexKey : indexToName.keySet()) {
+        updatedIndexToName.put(indexKey + definedSize, indexToName.get(indexKey));
+      }
+      indexToName.putAll(updatedIndexToName);
+
+      Map<Integer, Boolean> indexToEncoded = metadata.indexToEncoded();
+      Map<Integer, Boolean> updatedIndexToEncoded = new LinkedHashMap<>(requiredMetadata.indexToEncoded());
+      for (Integer indexKey : indexToEncoded.keySet()) {
+        updatedIndexToEncoded.put(indexKey + definedSize, indexToEncoded.get(indexKey));
+      }
+      indexToEncoded.putAll(updatedIndexToEncoded);
+    }
+
+    Proxy fluentProxy = (Proxy) newInstance(fluentTarget, fluentMetadata);
+    return new FluentMethodHandler(fluentTarget, fluentProxy);
   }
 
   static class FeignInvocationHandler implements InvocationHandler {
@@ -142,8 +184,7 @@ public class ReflectiveFeign extends Feign {
       this.decoder = checkNotNull(decoder, "decoder");
     }
 
-    public Map<String, MethodHandler> apply(Target key) {
-      List<MethodMetadata> metadata = contract.parseAndValidatateMetadata(key.type());
+    public Map<String, MethodHandler> apply(Target key, List<MethodMetadata> metadata) {
       Map<String, MethodHandler> result = new LinkedHashMap<String, MethodHandler>();
       for (MethodMetadata md : metadata) {
         BuildTemplateByResolvingArgs buildTemplate;
